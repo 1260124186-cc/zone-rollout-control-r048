@@ -36,38 +36,55 @@ func newHarness() (*harness, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create temporary directory: %w", err)
 	}
-	stateStore, err := store.Open(tempDir + "/state.json")
-	if err != nil {
+	h := &harness{clock: platform.NewManualClock(time.Date(2026, time.September, 25, 12, 0, 0, 0, time.UTC)), tempDir: tempDir}
+	if err := h.start(); err != nil {
 		_ = os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("open temporary store: %w", err)
+		return nil, err
 	}
-	clock := platform.NewManualClock(time.Date(2026, time.September, 25, 12, 0, 0, 0, time.UTC))
+	return h, nil
+}
+
+func (h *harness) start() error {
+	stateStore, err := store.Open(h.tempDir + "/state.json")
+	if err != nil {
+		return fmt.Errorf("open temporary store: %w", err)
+	}
 	ids := platform.CryptoIDGenerator{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	plans := plan.New(stateStore, clock, ids)
-	nodes := fleet.New(stateStore, clock, ids)
-	allocations := allocation.New(stateStore, clock, ids)
-	probes := probe.New(stateStore, clock, ids, allocations)
-	assessments := assessment.New(stateStore, clock, ids)
+	plans := plan.New(stateStore, h.clock, ids)
+	nodes := fleet.New(stateStore, h.clock, ids)
+	allocations := allocation.New(stateStore, h.clock, ids)
+	probes := probe.New(stateStore, h.clock, ids, allocations)
+	assessments := assessment.New(stateStore, h.clock, ids)
 	api := httpapi.New(plans, nodes, allocations, probes, assessments, ids, logger)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		_ = os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("listen: %w", err)
+		return fmt.Errorf("listen: %w", err)
 	}
 	server := &http.Server{Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		_ = server.Serve(listener)
 	}()
-	return &harness{
-		baseURL:  "http://" + listener.Addr().String(),
-		clock:    clock,
-		client:   &http.Client{Timeout: 10 * time.Second},
-		server:   server,
-		listener: listener,
-		tempDir:  tempDir,
-	}, nil
+	h.baseURL = "http://" + listener.Addr().String()
+	h.client = &http.Client{Timeout: 10 * time.Second}
+	h.server = server
+	h.listener = listener
+	return nil
+}
+
+// restart shuts the in-process server down and starts a fresh one over the same
+// snapshot directory, simulating a control-plane process restart.
+func (h *harness) restart() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := h.server.Shutdown(ctx); err != nil {
+		return fmt.Errorf("shutdown server: %w", err)
+	}
+	_ = h.listener.Close()
+	h.server = nil
+	h.listener = nil
+	return h.start()
 }
 
 func (h *harness) close() {

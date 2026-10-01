@@ -31,7 +31,7 @@
     {
       "id": "probe",
       "path": "internal/probe",
-      "responsibility": "probe validation, idempotent persistence, and lease completion"
+      "responsibility": "probe validation, idempotent persistence, immutable submission context, and lease completion"
     },
     {
       "id": "assessment",
@@ -126,6 +126,27 @@
       "success": "one probe is stored, the lease becomes reported, and the node returns to ready",
       "failure": "expired leases, inactive plans, and same-key different-payload requests fail atomically",
       "verification": "workflowprobe probe-ingestion submits and replays a probe, then confirms conflicting content and release are rejected",
+      "module_ids": [
+        "httpapi",
+        "probe",
+        "allocation",
+        "domain",
+        "storage"
+      ]
+    },
+    {
+      "id": "probe-submission-context",
+      "name": "Atomic probe submission context",
+      "entry": "PATCH /v1/leases/{id}/probes -> GET /v1/probes/{id}/context",
+      "steps": [
+        "validate and persist one probe in a single transaction",
+        "capture the bound plan version, latest serial, thresholds, lease terminal state, node summary, and state revision",
+        "reread the immutable summary by probe identifier",
+        "replay same-key requests, restart the process, and drive later state changes"
+      ],
+      "success": "submit, replay, stable reread, and post-restart reads all return the identical first-submission summary",
+      "failure": "expired leases, inactive plans, same-key different-payload requests, and validation errors create no context",
+      "verification": "workflowprobe probe-submission-context submits a probe, rereads and replays its context, mutates and completes the plan, restarts the service, and confirms failed submissions leave no context",
       "module_ids": [
         "httpapi",
         "probe",

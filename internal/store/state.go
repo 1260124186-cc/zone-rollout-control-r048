@@ -30,6 +30,9 @@ func normalize(state domain.State) domain.State {
 	if state.Probes == nil {
 		state.Probes = make(map[string]domain.Probe)
 	}
+	if state.ProbeContexts == nil {
+		state.ProbeContexts = make(map[string]domain.ProbeContext)
+	}
 	if state.Assessments == nil {
 		state.Assessments = make(map[string]domain.RolloutAssessment)
 	}

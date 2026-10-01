@@ -78,8 +78,8 @@ func submitProbe(
 	success bool,
 	serial uint32,
 	latency int,
-) (domain.Probe, error) {
-	var result domain.Probe
+) (domain.ProbeContext, error) {
+	var result domain.ProbeContext
 	err := harness.call(http.MethodPatch, "/v1/leases/"+leaseID+"/probes", domain.ProbeInput{
 		RequestKey:     requestKey,
 		Success:        success,

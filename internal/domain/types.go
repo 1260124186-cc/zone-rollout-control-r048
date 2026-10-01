@@ -119,6 +119,54 @@ type Probe struct {
 	PayloadFingerprint string    `json:"payload_fingerprint"`
 }
 
+// ProbePlanContext is the immutable plan snapshot bound to a probe submission.
+type ProbePlanContext struct {
+	ID                  string    `json:"id"`
+	State               PlanState `json:"state"`
+	Version             uint64    `json:"version"`
+	LatestRevisionID    string    `json:"latest_revision_id"`
+	LatestSerial        uint32    `json:"latest_serial"`
+	MinimumSuccessRatio float64   `json:"minimum_success_ratio"`
+	MaximumLatencyMS    int       `json:"maximum_latency_ms"`
+	ExpectedNodes       int       `json:"expected_nodes"`
+}
+
+// ProbeLeaseContext is the lease terminal state reached by a probe submission.
+type ProbeLeaseContext struct {
+	ID           string     `json:"id"`
+	PlanID       string     `json:"plan_id"`
+	NodeID       string     `json:"node_id"`
+	AllocationID string     `json:"allocation_id"`
+	State        LeaseState `json:"state"`
+	ClaimedAt    time.Time  `json:"claimed_at"`
+	ExpiresAt    time.Time  `json:"expires_at"`
+	FinishedAt   *time.Time `json:"finished_at,omitempty"`
+	ProbeID      string     `json:"probe_id"`
+}
+
+// ProbeNodeContext is the node state summary captured by a probe submission.
+type ProbeNodeContext struct {
+	ID        string    `json:"id"`
+	NodeName  string    `json:"node_name"`
+	Region    string    `json:"region"`
+	State     NodeState `json:"state"`
+	Version   uint64    `json:"version"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ProbeContext is the immutable summary atomically bound to a successful probe
+// submission. Same-key replays, process restarts, and later state changes all
+// return the snapshot captured by the first submission. The embedded Probe
+// keeps every original probe field at the top level of the JSON response.
+type ProbeContext struct {
+	Probe
+	Plan          ProbePlanContext  `json:"plan"`
+	Lease         ProbeLeaseContext `json:"lease"`
+	Node          ProbeNodeContext  `json:"node"`
+	StateRevision uint64            `json:"state_revision"`
+	CapturedAt    time.Time         `json:"captured_at"`
+}
+
 type RolloutAssessment struct {
 	ID               string    `json:"id"`
 	PlanID           string    `json:"plan_id"`
@@ -151,6 +199,7 @@ type State struct {
 	Leases                map[string]NodeLease         `json:"leases"`
 	LeaseGroups           map[string]LeaseGroup        `json:"lease_groups"`
 	Probes                map[string]Probe             `json:"probes"`
+	ProbeContexts         map[string]ProbeContext      `json:"probe_contexts"`
 	Assessments           map[string]RolloutAssessment `json:"assessments"`
 	LeaseRequestKeys      map[string]string            `json:"lease_request_keys"`
 	AssessmentRequestKeys map[string]string            `json:"assessment_request_keys"`

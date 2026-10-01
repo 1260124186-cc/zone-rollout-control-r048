@@ -91,11 +91,11 @@ func (s *Store) Write(ctx context.Context, fn func(*domain.State) error) error {
 			"reason": err.Error(),
 		})
 	}
+	next.SchemaVersion = schemaVersion
+	next.Revision = s.state.Revision + 1
 	if err := fn(&next); err != nil {
 		return err
 	}
-	next.SchemaVersion = schemaVersion
-	next.Revision = s.state.Revision + 1
 	if err := replaceFile(s.path, next); err != nil {
 		return domain.NewError(domain.CodeStorageFailure, "could not persist state", map[string]any{
 			"reason": err.Error(),

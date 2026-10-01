@@ -127,6 +127,35 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/leases/<lease_id>/probes \
   }'
 ```
 
+成功响应除探针原有字段外，还原子携带与本次提交同一时点绑定的不可变上下文：
+
+```json
+{
+  "id": "prb_...",
+  "lease_id": "lse_...",
+  "plan_id": "pln_...",
+  "node_id": "nod_...",
+  "success": true,
+  "observed_serial": 2026092501,
+  "plan": {
+    "id": "pln_...",
+    "state": "active",
+    "version": 3,
+    "latest_revision_id": "rev_...",
+    "latest_serial": 2026092501,
+    "minimum_success_ratio": 1,
+    "maximum_latency_ms": 80,
+    "expected_nodes": 2
+  },
+  "lease": {"state": "reported", "probe_id": "prb_..."},
+  "node": {"state": "ready", "version": 2},
+  "state_revision": 7,
+  "captured_at": "2026-09-25T12:00:00Z"
+}
+```
+
+`GET /v1/probes/<probe_id>/context` 按探针标识稳定重读这份摘要。同键同内容重放、服务重启以及后续计划、租约或节点变化都返回首次成功提交捕获的同一份快照；失败提交（过期租约、计划未激活、同键异载荷、校验失败等）不产生上下文，读取未知探针上下文返回 `404 not_found`。
+
 请求一致性判定：
 
 ```bash
@@ -175,7 +204,8 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/assessments \
 | `PATCH` | `/v1/plans/{id}/complete` | 完成计划 |
 | `PATCH` | `/v1/plans/{id}/leases` | 给节点分配租约 |
 | `PATCH` | `/v1/leases/{id}/release` | 提前释放租约 |
-| `PATCH` | `/v1/leases/{id}/probes` | 登记探针并完成租约 |
+| `PATCH` | `/v1/leases/{id}/probes` | 登记探针并完成租约，返回原子绑定的提交上下文 |
+| `GET` | `/v1/probes/{id}/context` | 按探针标识稳定重读首次提交上下文 |
 | `PATCH` | `/v1/plans/{id}/assessments` | 创建一致性判定 |
 | `GET` | `/v1/plans/{id}/assessments/latest` | 查询最近判定 |
 
@@ -187,6 +217,7 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/assessments \
 - 节点按 `ready -> leased -> ready` 变化，隔离节点不会被选中。
 - 一个节点同一时刻最多有一个 `claimed` 租约。
 - 相同请求键和相同内容可安全重放；同键异载荷返回 `idempotency_conflict`。
+- 成功探针提交原子返回计划版本、最新序列号、租约终态、节点摘要和状态版本，该上下文按探针标识不可变，重放和重启均返回首次摘要。
 - 一致性判定综合节点覆盖率、序列号、成功比例和最大延迟，返回 `consistent` 或 `review_required`。
 - 所有校验和冲突在快照替换前返回，不留下部分状态。
 
@@ -215,6 +246,7 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/assessments \
 go run ./cmd/workflowprobe plan-revision-lifecycle
 go run ./cmd/workflowprobe node-lease-allocation
 go run ./cmd/workflowprobe probe-ingestion
+go run ./cmd/workflowprobe probe-submission-context
 go run ./cmd/workflowprobe consistency-assessment
 ```
 

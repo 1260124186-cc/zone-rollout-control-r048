@@ -19,3 +19,12 @@ func (s *Server) submitProbe(w http.ResponseWriter, r *http.Request) {
 	}
 	sendData(w, r, http.StatusCreated, result)
 }
+
+func (s *Server) getProbeContext(w http.ResponseWriter, r *http.Request) {
+	result, err := s.probes.Context(r.Context(), r.PathValue("id"))
+	if err != nil {
+		sendError(w, r, err)
+		return
+	}
+	sendData(w, r, http.StatusOK, result)
+}
