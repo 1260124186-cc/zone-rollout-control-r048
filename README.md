@@ -127,6 +127,14 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/leases/<lease_id>/probes \
   }'
 ```
 
+成功响应在原有探针字段之外内联 `context`，携带与本次提交在同一事务内原子绑定的时点摘要：提交时的计划版本、最新序列号和判定阈值、租约终态与归属（计划、节点、分配组）以及节点释放后的状态摘要。该摘要不可变：同键重放、按探针标识重读、服务重启或之后的计划/节点状态变化都返回首次摘要。
+
+```bash
+curl -sS http://127.0.0.1:8090/v1/probes/<probe_id>/context
+```
+
+失败的提交（租约过期或已释放、计划未激活、同键异载荷等）不写入探针，也不产生上下文。
+
 请求一致性判定：
 
 ```bash
@@ -175,7 +183,8 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/assessments \
 | `PATCH` | `/v1/plans/{id}/complete` | 完成计划 |
 | `PATCH` | `/v1/plans/{id}/leases` | 给节点分配租约 |
 | `PATCH` | `/v1/leases/{id}/release` | 提前释放租约 |
-| `PATCH` | `/v1/leases/{id}/probes` | 登记探针并完成租约 |
+| `PATCH` | `/v1/leases/{id}/probes` | 登记探针并完成租约，响应内联原子绑定的提交上下文 |
+| `GET` | `/v1/probes/{id}/context` | 按探针标识重读首次提交上下文 |
 | `PATCH` | `/v1/plans/{id}/assessments` | 创建一致性判定 |
 | `GET` | `/v1/plans/{id}/assessments/latest` | 查询最近判定 |
 
@@ -187,6 +196,7 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/assessments \
 - 节点按 `ready -> leased -> ready` 变化，隔离节点不会被选中。
 - 一个节点同一时刻最多有一个 `claimed` 租约。
 - 相同请求键和相同内容可安全重放；同键异载荷返回 `idempotency_conflict`。
+- 探针成功提交返回与该次提交原子绑定的不可变上下文（计划版本、最新序列与阈值、租约终态归属、节点状态摘要）；重放、`GET /v1/probes/{id}/context`、重启和后续状态变化均返回首次摘要，失败提交不产生上下文。
 - 一致性判定综合节点覆盖率、序列号、成功比例和最大延迟，返回 `consistent` 或 `review_required`。
 - 所有校验和冲突在快照替换前返回，不留下部分状态。
 

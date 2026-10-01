@@ -78,8 +78,8 @@ func submitProbe(
 	success bool,
 	serial uint32,
 	latency int,
-) (domain.Probe, error) {
-	var result domain.Probe
+) (domain.ProbeReceipt, error) {
+	var result domain.ProbeReceipt
 	err := harness.call(http.MethodPatch, "/v1/leases/"+leaseID+"/probes", domain.ProbeInput{
 		RequestKey:     requestKey,
 		Success:        success,
@@ -87,5 +87,11 @@ func submitProbe(
 		LatencyMS:      latency,
 		ObservedAt:     harness.clock.Now(),
 	}, &result)
+	return result, err
+}
+
+func getProbeContext(harness *harness, probeID string) (domain.ProbeReceipt, error) {
+	var result domain.ProbeReceipt
+	err := harness.call(http.MethodGet, "/v1/probes/"+probeID+"/context", nil, &result)
 	return result, err
 }

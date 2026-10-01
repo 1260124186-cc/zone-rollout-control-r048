@@ -12,10 +12,19 @@ func (s *Server) submitProbe(w http.ResponseWriter, r *http.Request) {
 		sendError(w, r, err)
 		return
 	}
-	result, err := s.probes.Submit(r.Context(), r.PathValue("id"), input)
+	receipt, err := s.probes.Submit(r.Context(), r.PathValue("id"), input)
 	if err != nil {
 		sendError(w, r, err)
 		return
 	}
-	sendData(w, r, http.StatusCreated, result)
+	sendData(w, r, http.StatusCreated, receipt)
+}
+
+func (s *Server) getProbeContext(w http.ResponseWriter, r *http.Request) {
+	receipt, err := s.probes.Context(r.Context(), r.PathValue("id"))
+	if err != nil {
+		sendError(w, r, err)
+		return
+	}
+	sendData(w, r, http.StatusOK, receipt)
 }

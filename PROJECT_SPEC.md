@@ -72,6 +72,18 @@ Zone Rollout Control 是面向 DNS 运维人员的 Go HTTP 控制面。它把区
 - `request_key`、`success`、`observed_serial`、`latency_ms`。
 - `observed_at`、`stored_at`、`payload_fingerprint`。
 
+### ProbeContext
+
+首次成功提交探针时，在同一事务内原子捕获并永久绑定到该探针的时点上下文快照。之后任何重放、重读、计划或租约状态变化、服务重启都返回首次摘要，绝不重新计算。
+
+- `probe_id`：绑定的探针标识。
+- `plan`：提交时点的计划快照，含 `id`、`state`、`version`、`zone`、`latest_revision_id`、`latest_serial`、`minimum_success_ratio`、`maximum_latency_ms`、`expected_nodes`。
+- `lease`：提交后租约终态，含 `id`、`state`（`reported`）、`plan_id`、`node_id`、`allocation_id`、`claimed_at`、`expires_at`、`finished_at`。
+- `node`：提交后节点状态摘要，含 `id`、`node_name`、`region`、`state`（`ready`）、`version`、`updated_at`。
+- `captured_at`：摘要捕获时间。
+
+探针提交响应在保留全部探针字段的同时内联 `context`；`GET /v1/probes/{id}/context` 是按探针标识重读同一上下文的稳定入口，返回同样的探针加上下文。失败提交不写入探针也不产生上下文。
+
 ### RolloutAssessment
 
 一次计划范围内的确定性一致性判定。
@@ -181,18 +193,21 @@ ready --lease--> leased --report--> ready
 
 ### W3 探针登记
 
-入口：`PATCH /v1/leases/{id}/probes`。
+入口：
+
+- `PATCH /v1/leases/{id}/probes`
+- `GET /v1/probes/{id}/context`
 
 步骤：
 
 1. 入口校验租约、请求键、序列号、延迟和时间。
 2. 探针服务计算载荷指纹。
-3. 存储层写入探针、完成租约并释放节点。
-4. 返回探针及关联租约状态。
+3. 存储层写入探针、完成租约并释放节点，并在同一事务内捕获绑定到该探针的计划版本、最新序列/阈值、租约终态/归属和节点状态摘要。
+4. 返回探针及关联租约状态和原子绑定的上下文摘要。
 
-成功行为：首条探针落库；同键同内容安全重放。
+成功行为：首条探针与上下文落库；同键同内容安全重放且响应内联首份上下文；按探针标识可稳定重读首份上下文；服务重启和后续计划/节点状态变化不改变首份摘要。
 
-失败行为：租约过期、计划未激活、同键异载荷或持久化失败时保持原状态。
+失败行为：租约过期、计划未激活、同键异载荷或持久化失败时保持原状态，不产生上下文。
 
 ### W4 一致性判定
 
@@ -258,6 +273,7 @@ ready --lease--> leased --report--> ready
 - `PATCH /v1/plans/{id}/leases`
 - `PATCH /v1/leases/{id}/release`
 - `PATCH /v1/leases/{id}/probes`
+- `GET /v1/probes/{id}/context`
 - `PATCH /v1/plans/{id}/assessments`
 - `GET /v1/plans/{id}/assessments/latest`
 

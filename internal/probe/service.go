@@ -33,16 +33,16 @@ func (s *Service) Submit(
 	ctx context.Context,
 	leaseID string,
 	input domain.ProbeInput,
-) (domain.Probe, error) {
+) (domain.ProbeReceipt, error) {
 	now := s.clock.Now().UTC()
 	if err := domain.ValidateProbeInput(input, now); err != nil {
-		return domain.Probe{}, err
+		return domain.ProbeReceipt{}, err
 	}
 	if _, err := s.expirer.ExpireDue(ctx); err != nil {
-		return domain.Probe{}, err
+		return domain.ProbeReceipt{}, err
 	}
 	fingerprint := domain.ProbeFingerprint(leaseID, input)
-	var result domain.Probe
+	var receipt domain.ProbeReceipt
 	err := s.store.Write(ctx, func(state *domain.State) error {
 		lease, ok := state.Leases[leaseID]
 		if !ok {
@@ -61,7 +61,13 @@ func (s *Service) Submit(
 					"request_key": input.RequestKey,
 				})
 			}
-			result = existing
+			summary, found := state.ProbeContexts[existing.ID]
+			if !found {
+				return domain.NewError(domain.CodeStorageFailure, "probe references a missing submission context", map[string]any{
+					"probe_id": existing.ID,
+				})
+			}
+			receipt = domain.ProbeReceipt{Probe: existing, Context: summary}
 			return nil
 		}
 		if lease.State != domain.LeaseClaimed {
@@ -94,7 +100,7 @@ func (s *Service) Submit(
 				"node_id": lease.NodeID,
 			})
 		}
-		result = domain.Probe{
+		result := domain.Probe{
 			ID:                 s.ids.New("prb"),
 			LeaseID:            leaseID,
 			PlanID:             lease.PlanID,
@@ -119,13 +125,97 @@ func (s *Service) Submit(
 			node.UpdatedAt = now
 			state.Nodes[node.ID] = node
 		}
+		summary, err := captureContext(state, result.ID, plan, lease, node, now)
+		if err != nil {
+			return err
+		}
+		state.ProbeContexts[result.ID] = summary
 		store.AddAudit(state, s.ids, "probe", result.ID, "stored", now, map[string]any{
 			"lease_id": leaseID,
 			"plan_id":  lease.PlanID,
 		})
+		receipt = domain.ProbeReceipt{Probe: result, Context: summary}
 		return nil
 	})
-	return result, err
+	return receipt, err
+}
+
+// Context re-reads the immutable submission summary bound to a probe. Later
+// plan, lease, or node changes never affect the returned context.
+func (s *Service) Context(ctx context.Context, probeID string) (domain.ProbeReceipt, error) {
+	var receipt domain.ProbeReceipt
+	err := s.store.Read(ctx, func(state *domain.State) error {
+		result, ok := state.Probes[probeID]
+		if !ok {
+			return domain.NotFound("probe", probeID)
+		}
+		summary, found := state.ProbeContexts[probeID]
+		if !found {
+			return domain.NewError(domain.CodeStorageFailure, "probe references a missing submission context", map[string]any{
+				"probe_id": probeID,
+			})
+		}
+		receipt = domain.ProbeReceipt{Probe: result, Context: summary}
+		return nil
+	})
+	return receipt, err
+}
+
+// captureContext builds the point-in-time summary from the same in-transaction
+// state that stores the probe, so the summary is atomically bound to the
+// submission. The plan argument is the pre-mutation plan value; probe storage
+// never mutates the plan, so it remains the authoritative current aggregate.
+func captureContext(
+	state *domain.State,
+	probeID string,
+	plan domain.RolloutPlan,
+	lease domain.NodeLease,
+	node domain.ResolverNode,
+	now time.Time,
+) (domain.ProbeContext, error) {
+	var latestSerial uint32
+	if plan.LatestRevisionID != "" {
+		revision, ok := state.Revisions[plan.LatestRevisionID]
+		if !ok {
+			return domain.ProbeContext{}, domain.NewError(domain.CodeStorageFailure, "plan references a missing revision", map[string]any{
+				"revision_id": plan.LatestRevisionID,
+			})
+		}
+		latestSerial = revision.Serial
+	}
+	return domain.ProbeContext{
+		ProbeID: probeID,
+		Plan: domain.ProbePlanContext{
+			ID:                  plan.ID,
+			State:               plan.State,
+			Version:             plan.Version,
+			Zone:                plan.Zone,
+			LatestRevisionID:    plan.LatestRevisionID,
+			LatestSerial:        latestSerial,
+			MinimumSuccessRatio: plan.MinimumSuccessRatio,
+			MaximumLatencyMS:    plan.MaximumLatencyMS,
+			ExpectedNodes:       plan.ExpectedNodes,
+		},
+		Lease: domain.ProbeLeaseContext{
+			ID:           lease.ID,
+			State:        lease.State,
+			PlanID:       lease.PlanID,
+			NodeID:       lease.NodeID,
+			AllocationID: lease.AllocationID,
+			ClaimedAt:    lease.ClaimedAt,
+			ExpiresAt:    lease.ExpiresAt,
+			FinishedAt:   lease.FinishedAt,
+		},
+		Node: domain.ProbeNodeContext{
+			ID:        node.ID,
+			NodeName:  node.NodeName,
+			Region:    node.Region,
+			State:     node.State,
+			Version:   node.Version,
+			UpdatedAt: node.UpdatedAt,
+		},
+		CapturedAt: now,
+	}, nil
 }
 
 func pointer(value time.Time) *time.Time {
